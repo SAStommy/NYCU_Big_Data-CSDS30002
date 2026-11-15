@@ -1,0 +1,4 @@
+Q2=q2_ours
+Q3=q3_ours
+combined_features=topology+windows+decay
+route_attention=True
