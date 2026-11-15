@@ -20,13 +20,9 @@ hw2/
 
 The submitted folder already contains the prepared tables and Q2/Q3 ablation results, so the final model can be run directly without repeating the earlier experiments. The selection text files document the chosen variants. The Q4 runner reads `q2_ablation.csv` and `q3_ablation.csv` to determine the variants to combine.
 
-### Source code responsibilities
+### Model code
 
-- `scripts/preprocess.py` reads raw hourly GH Archive JSON files, filters the cohort, constructs and anonymizes the relational tables, and writes Parquet data.
-- `scripts/native_relgnn.py` loads the tables, builds time-cutoff-safe graph snapshots and features, defines event labels, and constructs the RelGNN model.
-- `scripts/run_experiment.py` trains the baseline and Q2/Q3 feature variants, selects variants from validation results, trains the Q4 combined model, and produces predictions.
-- `scripts/evaluate.py` checks prediction CSV format and user IDs, and can score predictions when labels are available.
-- `scripts/Q1_baseline.ipynb`, `Q2_relationships.ipynb`, `Q3_temporal.ipynb`, and `Q4_combined.ipynb` provide the corresponding question-by-question notebooks. The command-line runner above is the concise reproducible entry point.
+The model uses the RelGNN module in `../RelGNN` (including its atomic-route and message-passing components), adapted to this assignment's eight GitHub activity tables and their primary/foreign-key relationships. `scripts/native_relgnn.py` prepares table-specific features and time-cutoff graph snapshots, then builds the assignment's RelGNN model. `scripts/run_experiment.py` trains the baseline and Q2/Q3 variants, selects feature settings using validation results, trains the combined Q4 model, and writes predictions. The four Q1-Q4 notebooks are also included as question-by-question references.
 
 ## Environment
 
@@ -67,7 +63,18 @@ Q4 reads the prepared tables from `data/db/`, selects the Q2 and Q3 variants fro
 submission/output_315554001.csv
 ```
 
-The output filename contains the submitted student ID (`315554001`); change the filename in `scripts/run_experiment.py` if a different ID is required. The model needs a compatible GPU for practical runtime; it falls back to CPU when CUDA is unavailable, which may take substantially longer.
+The model needs a compatible GPU for practical runtime; it falls back to CPU when CUDA is unavailable, which may take substantially longer.
+
+### How the runner splits the data
+
+`scripts/run_experiment.py` defines the weeks in UTC; the boundaries correspond to Sunday-to-Sunday weeks in Taiwan time.
+
+- **Training windows:** three earlier labeled weeks (Taiwan time 2026-10-04 to 2026-10-25) train each model.
+- **Rolling validation:** two successive weeks (2026-10-18 to 2026-10-25 and 2026-10-25 to 2026-11-01) are predicted using only earlier weeks. The validation predictions are used to choose one decision threshold per activity and to compare Q2/Q3 variants.
+- **Fixed historical holdout:** Taiwan time 2026-11-01 to 2026-11-08 is held out when each variant is scored for comparison. Its score is recorded in the ablation results; it is a historical evaluation week, not the assignment's submission test case. Q4 then includes this now-labeled historical week when fitting the final submission model.
+- **Final submission test case:** Q4 predicts the user IDs in `submission/test_input.csv` for the assignment's future target period (2026-11-22 to 2026-11-29, Taiwan time). The activity labels for this target period are not available locally. Predictions use the per-activity thresholds chosen on rolling validation. The bundled GH Archive data ends on 2026-11-07, so the snapshot cannot include events from the gap between that collection end and the final prediction cutoff.
+
+The final test CSV contains one row per supplied `UserID` and six binary event predictions. The historical fixed holdout is used to report a score; it does not replace or reveal the future submission labels.
 
 ## Re-run all experiments
 
@@ -90,13 +97,14 @@ python scripts/run_experiment.py --part q4
 
 ### Rebuild the prepared tables (optional)
 
-The submitted `data/db/` folder contains the prepared tables, so this step is only needed if rebuilding them from raw GH Archive files. Put the hourly `.json.gz` archives (named `YYYY-MM-DD-H.json.gz`) in a folder, then from `BigData2026-Assignment2` run:
+The submitted `data/db/` folder already contains the eight prepared Parquet tables. To rebuild them from raw GH Archive events, run these commands from `BigData2026-Assignment2`:
 
 ```powershell
-python scripts/preprocess.py --raw PATH\TO\GH_ARCHIVE_HOURS --out data
+python scripts/get_gharchive.py
+python scripts/preprocess.py --raw raw_data --out data
 ```
 
-This writes the eight Parquet tables into `data/db/`. Preprocessing requires Python 3.9+ with `pandas` and `pyarrow`. Raw GH Archive files are not included in this submission; see [GH Archive](https://www.gharchive.org/) for the public hourly event archives and access information.
+`get_gharchive.py` downloads 24 hourly JSON archives per day for **2026-10-01 through 2026-11-07 inclusive**, into `raw_data/`. It skips files already downloaded. To fetch a different period, edit `start_date` and `end_date` near the top of that script before running it. The preprocessing command consumes those archives, filters and anonymizes the cohort's events, and writes the eight tables to `data/db/`. After rebuilding, run the Q1-Q4 sequence above to regenerate the baseline and Q2/Q3 selection results before running Q4. Raw archives are not included in the submission; they are available from [GH Archive](https://www.gharchive.org/).
 
 ## Check the prediction file
 
@@ -108,7 +116,7 @@ python scripts/evaluate.py --pred submission/output_315554001.csv --input submis
 
 The prediction CSV must have columns `UserID,open_pr,open_issue,issue_comment,pr_review,pr_review_comment,push`; each activity prediction must be `0` or `1`.
 
-## Source code, data, and licenses
+## Data source and licenses
 
 - **RelGNN source code:** The `RelGNN/` folder is the RelGNN repository by the RelBench team and is distributed under the [MIT License](https://github.com/snap-stanford/RelGNN/blob/main/LICENSE). Its copyright and license notice are included in `RelGNN/LICENSE`. This assignment's model code is in `BigData2026-Assignment2/scripts/native_relgnn.py` and `run_experiment.py`.
 - **Data source:** The event data source is [GH Archive](https://www.gharchive.org/), which archives public GitHub events as hourly JSON files. The included Parquet tables are derived from these events and anonymized by `scripts/preprocess.py`. Consult GH Archive and GitHub's applicable terms for the source data; the RelGNN MIT software license does not license the underlying GitHub event data.
